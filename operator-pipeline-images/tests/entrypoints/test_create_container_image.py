@@ -59,7 +59,7 @@ def test_create_container_image(
     args = MagicMock()
     args.pyxis_url = "https://catalog.redhat.com/api/containers/"
     args.isv_pid = "some_isv_pid"
-    args.environment = "prod"
+    args.connect_registry = "registry.connect.redhat.com"
     args.repository = "some_repo"
     args.docker_image_digest = "some_digest"
     args.bundle_version = "some_version"
@@ -82,7 +82,7 @@ def test_create_container_image(
                     "tags": [
                         {
                             "added_date": "1970-10-10T10:10:10.000000+00:00",
-                            "name": "some_version-1",
+                            "name": "some_version",
                         }
                     ],
                 }
@@ -113,7 +113,7 @@ def test_create_container_image_latest(
     args = MagicMock()
     args.pyxis_url = "https://catalog.redhat.com/api/containers/"
     args.isv_pid = "some_isv_pid"
-    args.environment = "prod"
+    args.connect_registry = "registry.connect.redhat.com"
     args.repository = "some_repo"
     args.docker_image_digest = "some_digest"
     args.bundle_version = "some_version"
@@ -137,7 +137,7 @@ def test_create_container_image_latest(
                     "tags": [
                         {
                             "added_date": "1970-10-10T10:10:10.000000+00:00",
-                            "name": "some_version-1",
+                            "name": "some_version",
                         },
                         {
                             "added_date": "1970-10-10T10:10:10.000000+00:00",

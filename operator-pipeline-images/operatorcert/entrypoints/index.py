@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from datetime import datetime, timedelta
-from typing import Any, List
+from typing import Any, Dict, List
 
 from operatorcert import iib, utils
 from operatorcert.logger import setup_logger
@@ -18,18 +18,20 @@ def setup_argparser() -> argparse.ArgumentParser:  # pragma: no cover
     Returns:
         Any: Initialized argument parser
     """
-    parser = argparse.ArgumentParser(description="Publish bundle to index image")
+    parser = argparse.ArgumentParser(description="Add bundle to index image")
     parser.add_argument(
         "--bundle-pullspec", required=True, help="Operator bundle pullspec"
-    )
-    parser.add_argument(
-        "--from-index", required=True, help="Base index pullspec (without tag)"
     )
     parser.add_argument(
         "--indices",
         required=True,
         nargs="+",
         help="List of indices the bundle supports, e.g --indices registry/index:v4.9 registry/index:v4.8",
+    )
+    parser.add_argument(
+        "--image-output",
+        default="index-image-paths.txt",
+        help="File name to output comma-separated list of temporary location of the unpublished index images built by IIB.",
     )
     parser.add_argument(
         "--iib-url",
@@ -69,10 +71,9 @@ def wait_for_results(iib_url: str, batch_id: int, timeout=60 * 60, delay=20) -> 
         # any have failed
         elif any([build.get("state") == "failed" for build in builds]):
             for build in builds:
-                LOGGER.error(f"IIB build failed: {build['id']}")
-                state_history = build.get("state_history", [])
-                if state_history:
-                    reason = state_history[0].get("state_reason")
+                if build.get("state") == "failed":
+                    LOGGER.error(f"IIB build failed: {build['id']}")
+                    reason = build.get("state_reason")
                     LOGGER.info(f"Reason: {reason}")
             return response
 
@@ -90,34 +91,32 @@ def wait_for_results(iib_url: str, batch_id: int, timeout=60 * 60, delay=20) -> 
     return None
 
 
-def publish_bundle(
-    from_index: str, bundle_pullspec: str, iib_url: str, index_versions: List[str]
+def add_bundle_to_index(
+    bundle_pullspec: str,
+    iib_url: str,
+    indices: List[str],
+    image_output: str,
 ) -> None:
     """
-    Publish a bundle to index image using IIB
+    Add a bundle to index image using IIB
 
     Args:
-        iib_url: url of IIB instance
         bundle_pullspec: bundle pullspec
-        from_index: target index pullspec
-        index_versions: list of index versions (tags)
+        iib_url: url of IIB instance
+        indices: list of original indices
+        image_output: file name to output the location of the newly built images to
     Raises:
         Exception: Exception is raised when IIB build fails
     """
 
-    user = os.getenv("QUAY_USER")
-    token = os.getenv("QUAY_TOKEN")
-
     payload = {"build_requests": []}
 
-    for version in index_versions:
+    for index in indices:
         payload["build_requests"].append(
             {
-                "from_index": f"{from_index}:{version}",
+                "from_index": index,
                 "bundles": [bundle_pullspec],
-                "overwrite_from_index": True,
                 "add_arches": ["amd64", "s390x", "ppc64le"],
-                "overwrite_from_index_token": f"{user}:{token}",
             }
         )
 
@@ -129,28 +128,30 @@ def publish_bundle(
         [build.get("state") == "complete" for build in response["items"]]
     ):
         raise Exception("IIB build failed")
+    else:
+        output_index_image_paths(image_output, response)
 
 
-def parse_indices(indices: List[str]) -> List[str]:
+def output_index_image_paths(
+    image_output: str,
+    response: Dict[str, Any],
+):
     """
-    Parses a list of indices and returns only the versions,
-    e.g [registry/index:v4.9, registry/index:v4.8] -> [v4.9, v4.8]
+    Extract the paths of the from_index and the newly built images.
     Args:
-        indices: List of indices
-
-    Returns:
-        Parsed list of versions
+        image_output: file name to output the image paths to
+        response: Response from IIB after the build is finished
     """
-    versions = []
-    for index in indices:
-        # split by : from right and get the rightmost result
-        split = index.rsplit(":", 1)
-        if len(split) == 1:
-            # unable to split by :
-            raise Exception(f"Unable to extract version from index {index}")
-        else:
-            versions.append(split[1])
-    return versions
+    LOGGER.info("Extracting manifest digests for signing...")
+    index_images = []
+
+    for build in response["items"]:
+        # The original from_index is used for signing
+        index_images.append(f"{build['from_index']}+{build['index_image_resolved']}")
+
+    with open(image_output, "w") as f:
+        f.write(",".join(index_images))
+    LOGGER.info(f"Index image paths written to output file {image_output}.")
 
 
 def main() -> None:  # pragma: no cover
@@ -167,8 +168,11 @@ def main() -> None:  # pragma: no cover
 
     utils.set_client_keytab(os.environ.get("KRB_KEYTAB_FILE", "/etc/krb5.krb"))
 
-    publish_bundle(
-        args.from_index, args.bundle_pullspec, args.iib_url, parse_indices(args.indices)
+    add_bundle_to_index(
+        args.bundle_pullspec,
+        args.iib_url,
+        args.indices,
+        args.image_output,
     )
 
 

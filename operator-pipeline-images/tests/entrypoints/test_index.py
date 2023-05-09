@@ -1,19 +1,10 @@
 from functools import partial
-from unittest.mock import MagicMock, patch
+from unittest import mock
+from unittest.mock import MagicMock, patch, call
 
 import pytest
 
 from operatorcert.entrypoints import index
-
-
-def test_parse_indices() -> None:
-    indices = ["registry/index:v4.9", "registry/index:v4.8"]
-    rsp = index.parse_indices(indices)
-    rsp == ["v4.9", "v4.8"]
-
-    # if there is no version
-    with pytest.raises(Exception):
-        index.parse_indices(["registry/index"])
 
 
 @patch("operatorcert.iib.get_builds")
@@ -33,21 +24,14 @@ def test_wait_for_results(mock_get_builds: MagicMock) -> None:
 
     assert wait()["items"] == [{"state": "complete", "batch": "some_batch_id"}]
 
-    # if the builds are in failed state without state history
-    mock_get_builds.return_value = {
-        "items": [{"state": "failed", "id": 1, "batch": "some_batch_id"}]
-    }
-
-    assert wait()["items"] == [{"state": "failed", "id": 1, "batch": "some_batch_id"}]
-
-    # if the builds are in failed state with state history
+    # if the builds are in failed state
     mock_get_builds.return_value = {
         "items": [
             {
                 "state": "failed",
                 "id": 1,
                 "batch": "some_batch_id",
-                "state_history": [{"state_reason": "failed due to timeout"}],
+                "state_reason": "failed due to timeout",
             }
         ]
     }
@@ -57,7 +41,7 @@ def test_wait_for_results(mock_get_builds: MagicMock) -> None:
             "state": "failed",
             "id": 1,
             "batch": "some_batch_id",
-            "state_history": [{"state_reason": "failed due to timeout"}],
+            "state_reason": "failed due to timeout",
         }
     ]
 
@@ -86,17 +70,26 @@ def test_wait_for_results(mock_get_builds: MagicMock) -> None:
 
 
 @patch("operatorcert.iib.add_builds")
+@patch("operatorcert.entrypoints.index.output_index_image_paths")
 @patch("operatorcert.entrypoints.index.wait_for_results")
-def test_publish_bundle(mock_results: MagicMock, mock_iib_builds: MagicMock) -> None:
+def test_add_bundle_to_index(
+    mock_results: MagicMock,
+    mock_image_paths: MagicMock,
+    mock_iib_builds: MagicMock,
+) -> None:
     mock_iib_builds.return_value = [{"state": "complete", "batch": "some_batch_id"}]
     mock_results.return_value = {
         "items": [{"state": "complete", "batch": "some_batch_id"}]
     }
-    index.publish_bundle(
-        "registry/index",
+    index.add_bundle_to_index(
         "redhat-isv/some-pullspec",
         "https://iib.engineering.redhat.com",
-        ["v4.9", "v4.8"],
+        ["registry/index:v4.9", "registry/index:v4.8"],
+        "test-image-path.txt",
+    )
+    mock_image_paths.assert_called_once_with(
+        "test-image-path.txt",
+        mock_results.return_value,
     )
 
     mock_iib_builds.return_value = [{"state": "failed", "batch": "some_batch_id"}]
@@ -105,9 +98,36 @@ def test_publish_bundle(mock_results: MagicMock, mock_iib_builds: MagicMock) -> 
     }
     # if there is no version
     with pytest.raises(Exception):
-        index.publish_bundle(
-            "registry/index",
+        index.add_bundle_to_index(
             "redhat-isv/some-pullspec",
             "https://iib.engineering.redhat.com",
-            ["v4.9", "v4.8"],
+            ["registry/index:v4.9", "registry/index:v4.8"],
+            "test-image-path.txt",
         )
+
+
+def test_output_index_image_paths() -> None:
+    image_output = "test-image-path.txt"
+    response = {
+        "items": [
+            {
+                "from_index": "registry/index:v4.8",
+                "index_image_resolved": "registry.test/test@sha256:1234",
+            },
+            {
+                "from_index": "registry/index:v4.9",
+                "index_image_resolved": "registry.test/test@sha256:5678",
+            },
+        ]
+    }
+    mock_open = mock.mock_open()
+
+    with mock.patch("builtins.open", mock_open):
+        index.output_index_image_paths(image_output, response)
+
+    mock_open.assert_called_once_with("test-image-path.txt", "w")
+
+    mock_open.return_value.write.assert_called_once_with(
+        "registry/index:v4.8+registry.test/test@sha256:1234,"
+        "registry/index:v4.9+registry.test/test@sha256:5678"
+    )

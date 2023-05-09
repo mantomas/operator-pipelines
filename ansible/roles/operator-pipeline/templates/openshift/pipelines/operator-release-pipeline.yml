@@ -18,18 +18,26 @@ spec:
       description: URL to the pull request
     - name: is_latest
       description: If explicitly set to "true", resulting image will be tagged as "latest"
-    - name: registry
-      description: temporary registry used by Hosted pipeline to pass the image to Release pipeline.
+    - name: src_registry
+      description: Source registry for the bundle image.
       default: quay.io
-    - name: image_namespace
-      description: The namespace/organization where images from Hosted pipeline are stored.
+    - name: dest_registry
+      description: Destination registry for the bundle image.
+      default: quay.io
+    - name: src_image_namespace
+      description: The namespace/organization where the bundle image from the Hosted pipeline is stored.
       default: $(context.pipelineRun.namespace)
+    - name: dest_image_namespace
+      description: The namespace/organization where the bundle image will be copied/released.
     - name: env
-      description: Which environment to run in. Can be one of [dev, qa, stage, prod]
+      description: Which environment to run in. Can be one of [dev, qa, stage, prod, integration-tests]
       default: "prod"
     - name: pipeline_image
       description: An image of operator-pipeline-images.
       default: "quay.io/redhat-isv/operator-pipelines-images:released"
+    - name: metrics_endpoint
+      description: Prometheus metrics endpoint
+      default: http://pipeline-metrics.pipeline-metrics-prod
     # Kubernetes secrets related params, usually with default values
     - name: github_token_secret_name
       description: The name of the Kubernetes Secret that contains the GitHub token.
@@ -37,12 +45,6 @@ spec:
     - name: github_token_secret_key
       description: The key within the Kubernetes Secret that contains the GitHub token.
       default: github_bot_token
-    - name: ibm_webhook_token_secret_name
-      description: The name of the Kubernetes Secret that contains the IBM webhook token.
-      default: ibm-webhook-token
-    - name: ibm_webhook_token_secret_key
-      description: The key within the Kubernetes Secret that contains the IBM webhook token.
-      default: token
     - name: pyxis_ssl_secret_name
       description: Kubernetes secret name that contains the Pyxis SSL files.
       default: operator-pipeline-api-certs
@@ -70,12 +72,20 @@ spec:
       description: >-
         The key within the Kubernetes Secret that contains the kerberos keytab for submitting IIB builds.
       default: krb5.keytab
+    - name: signing_pub_secret_name
+      description: The name of the Kubernetes Secret that contains the public key for verifying signatures.
+      default: signing-pub-key
+    - name: signing_pub_secret_key
+      description: The key within the Kubernetes Secret that contains the public key for verifying signatures.
+      default: sig-key.pub
   workspaces:
     - name: repository
     - name: results
     - name: ssh-dir
       optional: true
-    - name: registry-credentials
+    - name: registry-pull-credentials
+    - name: registry-push-credentials
+    - name: registry-serve-credentials
     - name: image-data
 
   tasks:
@@ -290,89 +300,85 @@ spec:
         kind: Task
       params:
         - name: image
-          value: &bundleImage "$(params.registry)/$(params.image_namespace)/$(tasks.bundle-path-validation.results.package_name):$(tasks.bundle-path-validation.results.bundle_version)"
+          value: &srcBundleImage "$(params.src_registry)/$(params.src_image_namespace)/$(tasks.bundle-path-validation.results.package_name):$(tasks.bundle-path-validation.results.bundle_version)"
         - name: registry
-          value: $(params.registry)
+          value: $(params.src_registry)
       workspaces:
         - name: registry-credentials
-          workspace: registry-credentials
+          workspace: registry-pull-credentials
         - name: image-data
           workspace: image-data
 
-    # Publish image to OCP registry
-    - name: publish-to-ocp-registry
+    - name: copy-bundle-image-to-released-registry
       runAfter:
         - get-vendor-related-data
       taskRef:
-        name: publish-to-ocp-registry
+        name: copy-image
       params:
-        - name: cert_project_id
-          value: "$(tasks.certification-project-check.results.certification_project_id)"
-        - name: vendor_label
-          value: "$(tasks.get-vendor-related-data.results.vendor_label)"
-        - name: repository_name
-          value: "$(tasks.get-cert-project-related-data.results.repo_name)"
-        - name: image
-          value: *bundleImage
-        - name: is_latest
-          value: "$(params.is_latest)"
-        - name: bundle_version
-          value: "$(tasks.bundle-path-validation.results.bundle_version)"
-        - name: connect_registry
-          value: "$(tasks.set-env.results.connect_registry)"
-        - name: ocp_registry_kubeconfig_secret_name
-          value: "$(params.ocp_registry_kubeconfig_secret_name)"
-        - name: ocp_registry_kubeconfig_secret_key
-          value: "$(params.ocp_registry_kubeconfig_secret_key)"
-
-    # Trigger IBM webhook for marketplace replication
-    - name: trigger-marketplace-replication
-      runAfter:
-        - publish-to-ocp-registry
-        - get-supported-versions
-        - bundle-path-validation
-      taskRef:
-        name: trigger-marketplace-replication
-      params:
-        - name: bundle_path
-          value: "$(tasks.get-bundle-path.results.bundle_path)"
-        - name: ibm_webhook_token_secret_name
-          value: "$(params.ibm_webhook_token_secret_name)"
-        - name: ibm_webhook_token_secret_key
-          value: "$(params.ibm_webhook_token_secret_key)"
-        - name: package
-          value: "$(tasks.bundle-path-validation.results.package_name)"
         - name: pipeline_image
           value: "$(params.pipeline_image)"
-        - name: ocp_version
-          value: "$(tasks.get-supported-versions.results.ocp_version)"
-        - name: organization
-          value: "$(tasks.get-organization.results.organization)"
-        - name: version
+        - name: src_image
+          value: *srcBundleImage
+        - name: is_latest
+          value: "$(params.is_latest)"
+        - name: dest_image_registry_namespace_certproject
+          value: "$(params.dest_registry)/$(params.dest_image_namespace)/$(tasks.certification-project-check.results.certification_project_id)"
+        - name: dest_image_tag
           value: "$(tasks.bundle-path-validation.results.bundle_version)"
+        - name: connect_repo_path
+          value: "$(tasks.set-env.results.connect_registry)/$(tasks.get-vendor-related-data.results.vendor_label)/$(tasks.get-cert-project-related-data.results.repo_name)"
       workspaces:
-        - name: source
-          workspace: repository
-          subPath: src
+        - name: src-registry-credentials
+          workspace: registry-pull-credentials
+        - name: dest-registry-credentials
+          workspace: registry-push-credentials
+
+    - name: set-cert-project-repository
+      runAfter:
+        - copy-bundle-image-to-released-registry
+      taskRef:
+        name: set-cert-project-repository
+      params:
+        - name: pipeline_image
+          value: "$(params.pipeline_image)"
+        - name: cert_project_id
+          value: "$(tasks.certification-project-check.results.certification_project_id)"
+        - name: registry
+          value: "$(params.dest_registry)"
+        - name: repository
+          value: "$(params.dest_image_namespace)/$(tasks.certification-project-check.results.certification_project_id)"
+        - name: docker_config_file_name
+          value: ".dockerconfigjson"
+        - name: pyxis_url
+          value: "$(tasks.set-env.results.pyxis_url)"
+        - name: pyxis_ssl_secret_name
+          value: "$(params.pyxis_ssl_secret_name)"
+        - name: pyxis_ssl_cert_secret_key
+          value: "$(params.pyxis_ssl_cert_secret_key)"
+        - name: pyxis_ssl_key_secret_key
+          value: "$(params.pyxis_ssl_key_secret_key)"
+      workspaces:
+        - name: registry-credentials
+          workspace: registry-serve-credentials
 
     # create container image
     - name: create-container-image
       runAfter:
-        - publish-to-ocp-registry
+        - set-cert-project-repository
         - inspect-image
       taskRef:
         name: create-container-image
       params:
         - name: pipeline_image
           value: "$(params.pipeline_image)"
-        - name: environment
-          value: "$(params.env)"
+        - name: connect_registry
+          value: "$(tasks.set-env.results.connect_registry)"
         - name: isv_pid
           value: "$(tasks.get-cert-project-related-data.results.isv_pid)"
         - name: repository
           value: "$(tasks.get-vendor-related-data.results.vendor_label)/$(tasks.get-cert-project-related-data.results.repo_name)"
         - name: container_digest
-          value: "$(tasks.publish-to-ocp-registry.results.container_digest)"
+          value: "$(tasks.copy-bundle-image-to-released-registry.results.container_digest)"
         - name: pyxis_url
           value: "$(tasks.set-env.results.pyxis_url)"
         - name: pyxis_ssl_secret_name
@@ -389,35 +395,10 @@ spec:
         - name: image-data
           workspace: image-data
 
-    # call IIB to publish the bundle
-    - name: publish-bundle
-      runAfter:
-        - create-container-image
-        - trigger-marketplace-replication
-      taskRef:
-        name: publish-bundle
-      params:
-        - name: pipeline_image
-          value: "$(params.pipeline_image)"
-        - name: bundle_versions
-          value: "$(tasks.get-supported-versions.results.indices)"
-        - name: bundle_pullspec
-          value: "$(tasks.publish-to-ocp-registry.results.image_pullspec)"
-        - name: operator_distribution_method
-          value: "$(tasks.get-cert-project-related-data.results.operator_distribution)"
-        - name: iib_url
-          value: "$(tasks.set-env.results.iib_url)"
-        - name: environment
-          value: "$(params.env)"
-        - name: kerberos_keytab_secret_name
-          value: "$(params.kerberos_keytab_secret_name)"
-        - name: kerberos_keytab_secret_key
-          value: "$(params.kerberos_keytab_secret_key)"
-
     # Publish Vendor, Repository
     - name: publish-resources
       runAfter:
-        - publish-bundle
+        - create-container-image
       taskRef:
         name: publish-resources
       params:
@@ -435,10 +416,160 @@ spec:
           value: "$(params.pyxis_ssl_cert_secret_key)"
         - name: pyxis_ssl_key_secret_key
           value: "$(params.pyxis_ssl_key_secret_key)"
+        - name: connect_registry
+          value: "$(tasks.set-env.results.connect_registry)"
+
+    # acquire/lease the resource to resolve the conflict of concurrent pipelineruns
+    - name: acquire-lease
+      runAfter:
+        - publish-resources
+        - get-supported-versions
+      when: &whenNotUndistributed
+        - input: &operatorDistribution "$(tasks.get-cert-project-related-data.results.operator_distribution)"
+          operator: notin
+          values:
+            - undistributed
+      taskRef:
+        name: acquire-lease
+      params:
+        - name: pipeline_image
+          value: "$(params.pipeline_image)"
+        - name: lease-name
+          value: *operatorDistribution
+
+    # call IIB to add the bundle to index
+    - name: add-bundle-to-index
+      runAfter:
+        - acquire-lease
+      when: *whenNotUndistributed
+      taskRef:
+        name: add-bundle-to-index
+      params:
+        - name: pipeline_image
+          value: "$(params.pipeline_image)"
+        - name: index_images
+          value: "$(tasks.get-supported-versions.results.indices)"
+        - name: bundle_pullspec
+          value: "$(tasks.copy-bundle-image-to-released-registry.results.image_pullspec)"
+        - name: iib_url
+          value: "$(tasks.set-env.results.iib_url)"
+        - name: environment
+          value: "$(params.env)"
+        - name: kerberos_keytab_secret_name
+          value: "$(params.kerberos_keytab_secret_name)"
+        - name: kerberos_keytab_secret_key
+          value: "$(params.kerberos_keytab_secret_key)"
+
+    # use manifest list digests from IIB output and get the manifest digests from registry
+    - name: get-manifest-digests
+      runAfter:
+        - add-bundle-to-index
+      when: *whenNotUndistributed
+      taskRef:
+        name: get-manifest-digests
+      params:
+        - name: pipeline_image
+          value: "$(params.pipeline_image)"
+        - name: index_image_paths
+          value: "$(tasks.add-bundle-to-index.results.index_image_paths)"
         - name: environment
           value: "$(params.env)"
 
+    # send UMB message for RADAS to sign the container image
+    - name: request-signature
+      runAfter:
+        - get-manifest-digests
+      when: *whenNotUndistributed
+      taskRef:
+        name: request-signature
+        bundle: "quay.io/redhat-isv/tkn-signing-bundle:4692680007"
+      params:
+        - name: pipeline_image
+          value: "$(params.pipeline_image)"
+        - name: manifest_digest
+          value: "$(tasks.get-manifest-digests.results.manifest_digests)"
+        - name: reference
+          value: "$(tasks.get-manifest-digests.results.docker_references)"
+        - name: requester
+          value: "amisstea"
+        - name: sig_key_id
+          value: "$(tasks.set-env.results.sig_key_id)"
+        - name: sig_key_name
+          value: "$(tasks.set-env.results.sig_key_name)"
+        - name: umb_ssl_secret_name
+          value: "$(params.pyxis_ssl_secret_name)"
+        - name: umb_ssl_cert_secret_key
+          value: "$(params.pyxis_ssl_cert_secret_key)"
+        - name: umb_ssl_key_secret_key
+          value: "$(params.pyxis_ssl_key_secret_key)"
+        - name: umb_client_name
+          value: "$(tasks.set-env.results.umb_client_name)"
+        - name: umb_url
+          value: "$(tasks.set-env.results.umb_url)"
+      workspaces:
+        - name: source
+          workspace: repository
+          subPath: signing
+
+    - name: upload-signature
+      runAfter:
+        - request-signature
+      when: *whenNotUndistributed
+      taskRef:
+        name: upload-signature
+        bundle: "quay.io/redhat-isv/tkn-signing-bundle:4692680007"
+      params:
+        - name: pipeline_image
+          value: "$(params.pipeline_image)"
+        - name: signature_data_file
+          value: "$(tasks.request-signature.results.signature_data_file)"
+        - name: pyxis_ssl_secret_name
+          value: "$(params.pyxis_ssl_secret_name)"
+        - name: pyxis_ssl_cert_secret_key
+          value: "$(params.pyxis_ssl_cert_secret_key)"
+        - name: pyxis_ssl_key_secret_key
+          value: "$(params.pyxis_ssl_key_secret_key)"
+        - name: pyxis_url
+          value: "$(tasks.set-env.results.pyxis_url)"
+        - name: signing_pub_secret_name
+          value: "$(params.signing_pub_secret_name)"
+        - name: signing_pub_secret_key
+          value: "$(params.signing_pub_secret_key)"
+        - name: verify_signature
+          value: "true"
+      workspaces:
+        - name: source
+          workspace: repository
+          subPath: signing
+
+    - name: publish-to-index
+      runAfter:
+        - upload-signature
+      when: *whenNotUndistributed
+      taskRef:
+        name: publish-to-index
+      params:
+        - name: pipeline_image
+          value: "$(params.pipeline_image)"
+        - name: index_image_paths
+          value: "$(tasks.add-bundle-to-index.results.index_image_paths)"
+        - name: environment
+          value: "$(params.env)"
+        - name: operator_distribution_method
+          value: *operatorDistribution
+
+
   finally:
+
+    # Release the acquired resource
+    - name: release-lease
+      taskRef:
+        name: release-lease
+      params:
+        - name: pipeline_image
+          value: "$(params.pipeline_image)"
+        - name: lease-name
+          value: *operatorDistribution
 
     # Upload the logs of this pipeline.
     # Dependencies on other task results should be minimized. If any
@@ -455,11 +586,15 @@ spec:
           value: "$(tasks.certification-project-check.results.certification_project_id)"
         - name: bundle_version
           value: "$(tasks.bundle-path-validation.results.bundle_version)"
+        - name: git_pr_url
+          value: $(params.git_pr_url)
         - name: package_name
           value: "$(tasks.bundle-path-validation.results.package_name)"
         - name: pyxis_url
           value: "$(tasks.set-env.results.pyxis_url)"
         - name: pipeline_name
+          value: "$(context.pipeline.name)"
+        - name: pipelinerun_name
           value: "$(context.pipelineRun.name)"
         - name: pyxis_ssl_secret_name
           value: "$(params.pyxis_ssl_secret_name)"
@@ -590,3 +725,17 @@ spec:
         - name: output
           workspace: results
           subPath: summary
+
+    # Submit a pipeline metrics to a collector
+    - name: update-metrics
+      taskRef:
+        name: update-metrics
+      params:
+        - name: pipelinerun
+          value: "$(context.pipelineRun.name)"
+        - name: metrics_url
+          value: "$(params.metrics_endpoint)"
+      workspaces:
+        - name: output
+          workspace: results
+          subPath: metrics

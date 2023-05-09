@@ -12,12 +12,24 @@ spec:
       default: "digestPinning"
     - name: git_email
       default: "no-reply@redhat.com"
+    - name: gitInitImage
+      description: The image providing the git-init binary that the checkout task runs.
+      type: string
+      default: "registry.redhat.io/openshift-pipelines/pipelines-git-init-rhel8@sha256:a538c423e7a11aae6ae582a411fdb090936458075f99af4ce5add038bb6983e8"
     - name: upstream_repo_name
       default: ""
       description: Upstream repository where the pull request will be opened (namespace/name)
+    - name: upstream_repo_branch
+      default: main
+      description: Branch in the upstream repo to use as the base for the pull request
     - name: bundle_path
+    - name: builder_image
+      default: "registry.redhat.io/rhel8/buildah@sha256:a1e5cc0fb334e333e5eab69689223e8bd1f0c060810d260603b26cf8c0da2023"
     - name: registry
       default: image-registry.openshift-image-registry.svc:5000
+    - name: podman_image
+      description: Podman image
+      default: "registry.redhat.io/rhel8/podman:8.7"
     - name: env
       description: Which environment to run in. Can be one of [dev, qa, stage, prod]
       default: "prod"
@@ -54,11 +66,16 @@ spec:
     - name: kubeconfig_secret_key
       description: The key within the Kubernetes Secret that contains the kubeconfig.
       default: kubeconfig
+    - name: tlsverify
+      description: Enable TLS verification
+      default: "true"
   workspaces:
     - name: pipeline
     - name: ssh-dir
       optional: true
     - name: registry-credentials
+      optional: true
+    - name: registry-cacert
       optional: true
   tasks:
     - name: set-env
@@ -83,7 +100,7 @@ spec:
         - name: revision
           value: $(params.git_branch)
         - name: gitInitImage
-          value: registry.redhat.io/openshift-pipelines/pipelines-git-init-rhel8@sha256:bc551c776fb3d0fcc6cfd6d8dc9f0030de012cb9516fac42b1da75e6771001d9
+          value: $(params.gitInitImage)
       workspaces:
         - name: output
           workspace: pipeline
@@ -140,6 +157,8 @@ spec:
           value: "$(params.git_email)"
         - name: dirty_flag
           value: "$(tasks.digest-pinning.results.dirty_flag)"
+        - name: gitInitImage
+          value: $(params.gitInitImage)
       workspaces:
         - name: source
           workspace: pipeline
@@ -284,15 +303,23 @@ spec:
         kind: Task
       params:
         - name: IMAGE
-          value: &bundleImage "$(params.registry)/$(params.image_namespace)/$(tasks.bundle-path-validation.results.package_name):$(tasks.bundle-path-validation.results.bundle_version)"
+          # adding in `-bundles` to the bundleImage path to support users that use quay for their operator image,
+          # otherwise this would overwrite their operator image
+          value: &bundleImage "$(params.registry)/$(params.image_namespace)/$(tasks.bundle-path-validation.results.package_name)-bundle:$(tasks.bundle-path-validation.results.bundle_version)"
         - name: CONTEXT
           value: "$(params.bundle_path)"
+        - name: TLSVERIFY
+          value: "$(params.tlsverify)"
+        - name: BUILDER_IMAGE
+          value: "$(params.builder_image)"
       workspaces:
         - name: source
           workspace: pipeline
           subPath: src
         - name: credentials
           workspace: registry-credentials
+        - name: cacert
+          workspace: registry-cacert
 
     # Index image contains a record of bundle images from which
     # manifests could be extract in order to install an operator.
@@ -307,6 +334,8 @@ spec:
           value: "$(params.pipeline_image)"
         - name: bundle_image
           value: *bundleImage
+        - name: podman_image
+          value: "$(params.podman_image)"
         - name: from_index
           value: "$(tasks.get-supported-versions.results.max_supported_index)"
       workspaces:
@@ -327,6 +356,8 @@ spec:
           value: &bundleIndexImage "$(params.registry)/$(params.image_namespace)/$(tasks.bundle-path-validation.results.package_name)-index:$(tasks.bundle-path-validation.results.bundle_version)"
         - name: DOCKERFILE
           value: "$(tasks.generate-index.results.index_dockerfile)"
+        - name: TLSVERIFY
+          value: "$(params.tlsverify)"
       workspaces:
         - name: source
           workspace: pipeline
@@ -423,7 +454,7 @@ spec:
         - name: digest_pinned_branch
           value: "$(tasks.commit-pinned-digest.results.branch)"
         - name: target_branch
-          value: "$(tasks.set-env.results.target_branch)"
+          value: "$(params.upstream_repo_branch)"
         - name: test_logs_url
           value: "$(tasks.upload-artifacts.results.log_url)"
         - name: test_result_url
@@ -484,6 +515,8 @@ spec:
         - name: pyxis_url
           value: "$(tasks.set-env.results.pyxis_url)"
         - name: pipeline_name
+          value: "$(context.pipeline.name)"
+        - name: pipelinerun_name
           value: "$(context.pipelineRun.name)"
         - name: pyxis_api_key_secret_name
           value: "$(params.pyxis_api_key_secret_name)"

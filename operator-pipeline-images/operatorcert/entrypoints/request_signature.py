@@ -132,6 +132,8 @@ def process_message(msg: Any) -> None:
         LOGGER.info(
             f"Response from radas successfully received for request {msg_request_id}"
         )
+        # Give some time for logs to be written to disk
+        time.sleep(1)
         sys.exit(0)
     else:
         LOGGER.info(f"Ignored message from another request ({msg_request_id})")
@@ -203,8 +205,8 @@ def request_signature(args: Any) -> None:
     """
     Format and send out a UMB message to request signing, and retry as needed.
     """
-    manifests = args.manifest_digest.split(",")
-    references = args.reference.split(",")
+    manifests = args.manifest_digest.strip(",").split(",")
+    references = args.reference.strip(",").split(",")
 
     if len(manifests) != len(references):
         LOGGER.error(

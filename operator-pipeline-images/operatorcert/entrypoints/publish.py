@@ -29,12 +29,6 @@ def setup_argparser() -> Any:
         help="Base URL for Pyxis container metadata API",
     )
     parser.add_argument("--verbose", action="store_true", help="Verbose output")
-    parser.add_argument(
-        "--environment",
-        help="Environment where a tool runs",
-        choices=["prod", "stage", "dev", "qa"],
-        default="dev",
-    )
 
     sub_parsers = parser.add_subparsers()
     vendor_parser = sub_parsers.add_parser("vendor")
@@ -51,6 +45,10 @@ def setup_argparser() -> Any:
 
     repository_parser.add_argument(
         "--cert-project-id", help="Certification project ID", required=True
+    )
+
+    repository_parser.add_argument(
+        "--connect-registry", help="Connect registry host", required=True
     )
 
     return parser
@@ -153,7 +151,7 @@ def create_repository(args: Any, project: Dict[str, Any]) -> Any:
     long_description = container.get("repository_description") or " "
     # strip html, trim by word boundary, max length 100, add ellipsis
     short_description = html2text.html2text(long_description)
-    short_description = textwrap.wrap(short_description, 97)[0] + "..."
+    short_description = textwrap.shorten(short_description, 97, placeholder="...")
 
     display_data = {
         "name": project.get("name", ""),
@@ -168,9 +166,9 @@ def create_repository(args: Any, project: Dict[str, Any]) -> Any:
         "privileged_images_allowed": container.get("privileged", False),
         "protected_for_pull": False,
         "protected_for_search": False,
-        "registry": utils.get_registry_for_env(args.environment),
+        "registry": args.connect_registry,
         "repository": repository,
-        "build_categories": ["Operator Bundle Image"],
+        "build_categories": ["Operator bundle"],
         "isv_pid": container.get("isv_pid"),
         "application_categories": container.get("application_categories", []),
         "includes_multiple_content_streams": False,

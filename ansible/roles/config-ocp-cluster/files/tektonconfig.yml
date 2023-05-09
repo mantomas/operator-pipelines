@@ -1,0 +1,14 @@
+---
+apiVersion: v1alpha1
+kind: TektonConfig
+metadata:
+  name: config
+spec:
+  pipeline:
+    scope-when-expressions-to-task: true
+  # Default pruner settings. May be overridden using namespace annotations.
+  pruner:
+    keep: 50
+    resources:
+      - pipelinerun
+    schedule: "*/5 * * * *"

@@ -6,6 +6,9 @@ metadata:
 spec:
   params:
     - name: pipeline_image
+    - name: podman_image
+      description: Podman image
+      default: "registry.redhat.io/rhel8/podman:8.7"
     - name: bundle_image
       description: Pull spec of a bundle image
     - name: from_index
@@ -30,19 +33,29 @@ spec:
       - name: FBC_FILE
         value: fbc.txt
   steps:
+    - name: prepare
+      image: "$(params.podman_image)"
+      workingDir: $(workspaces.output.path)
+      script: |
+        #! /usr/bin/env bash
+        chmod 664 podman-inspect.json
+
+        mkdir -p $DOCKER_CONFIG
+        chmod 775 $DOCKER_CONFIG
+        cp $HOME/.docker/config.json $DOCKER_CONFIG/config.json
+        chmod 664 $DOCKER_CONFIG/config.json
+
     - name: inspect-base-index
-      image: registry.redhat.io/rhel8/podman:8.5-13
+      image: "$(params.podman_image)"
+      env:
+        - name: STORAGE_DRIVER
+          value: vfs
+      securityContext:
+        privileged: true
       workingDir: $(workspaces.output.path)
       script: |
         #! /usr/bin/env bash
         set -exo pipefail
-
-        # Copy the default credentials to the "output" workspace so they can be
-        # accessed without root access in other steps.
-        mkdir -p $DOCKER_CONFIG
-        chmod 777 $DOCKER_CONFIG
-        cp $HOME/.docker/config.json $DOCKER_CONFIG/config.json
-        chmod 664 $DOCKER_CONFIG/config.json
 
         # Pull the index image from a pre-configured imagestream in the current namespace.
         # It may be possible to eliminate this once sqlite-based index images are no
@@ -51,8 +64,7 @@ spec:
         FROM_INDEX="$(params.internal_registry)/$(context.taskRun.namespace)/$INDEX_IMG_STREAM"
 
         podman pull $FROM_INDEX
-        podman image inspect $FROM_INDEX | tee podman-inspect.json
-
+        podman image inspect $FROM_INDEX | tee -a podman-inspect.json
     - name: determine-index-format
       image: "$(params.pipeline_image)"
       workingDir: $(workspaces.output.path)
@@ -67,6 +79,8 @@ spec:
 
     - name: extract-database
       image: "$(params.from_index)"
+      # Ensure OpenShift doesn't use a cached image tag
+      imagePullPolicy: Always
       workingDir: $(workspaces.output.path)
       script: |
         #! /usr/bin/env bash
@@ -108,7 +122,7 @@ spec:
           opm migrate index.db index
 
           # Generate the index Dockerfile
-          opm alpha generate dockerfile index
+          opm generate dockerfile index
 
           # Amend the Dockerfile with the addition of the sqlite DB for backwards compatibility
           echo -e "\nADD index.db $DB_PATH\n" >> index.Dockerfile

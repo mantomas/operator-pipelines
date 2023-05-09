@@ -11,16 +11,29 @@
 
 ## Setup
 
+1. [Git leaks detection](#git-leaks-detection)
 1. [Prepare a development environment](#prepare-a-development-environment)
 1. [Prepare a certification project](#prepare-a-certification-project)
 1. [Prepare an Operator bundle](#prepare-an-operator-bundle)
-1. [Prepare your `ci.yaml`](#prepare-your-ci.yaml)
+1. [Prepare your `ci.yaml`](#prepare-your-ciyaml)
 1. [Create a bundle pull request](#create-a-bundle-pull-request) (optional)
     - Required for testing hosted or release pipelines
 1. [Create an API key](#create-an-api-key) (optional)
     - Required for testing submission with the CI pipeline
 1. [Prepare the CI to run from your fork](ci-cd.md) (optional)
-    - Required to run E2E testing on forks of this repo.
+    - Required to run integration testing on forks of this repo.
+
+### Git leaks detection
+Since the repository contains a secret information in form of encrypted
+Ansible Vault there is high chance that developer may push a commit with
+decrypted secrets by mistake. To avoid this problem we recommend
+to use `Gitleaks` tool that prevent you from commit secret code into git history.
+
+The repository is already pre-configured but each developer has to make final
+config changes in his/her environment.
+
+Follow the [documentation](https://github.com/gitleaks/gitleaks#pre-commit) to
+configure Gitleaks on your computer.
 
 ### Prepare a Development Environment
 
@@ -37,18 +50,28 @@ command can be obtained by clicking on your username in upper right corner, and
 selecting `copy login command`.
 
 ```bash
-# Assuming the current working directory is ansible/
-./init-custom-env.sh $PROJECT $ENVIRONMENT $PASSWD_FILE [$PIPELINE_IMAGE_TAG]
+ansible-playbook -v \
+  -i "ansible/inventory/operator-pipeline-$ENV" \
+  -e "oc_namespace=$NAMESPACE" \
+  -e "ocp_token=`oc whoami -t`" \
+  --vault-password-file $VAULT_PASSWORD_PATH \
+  ansible/playbooks/deploy.yml
 ```
 
-| Argument | Description |
-| -------- | ----------- |
-| PROJECT | An OpenShift project name (eg. `john-playground`). Pipeline resources will be installed here. |
-| ENVIRONMENT | The environmental dependencies and corresponding credentials to leverage. Can be one of `dev`, `qa`, `stage` or `prod`. |
-| PASSWD_FILE | File path containing the ansible vault password. |
-| PIPELINE_IMAGE_TAG | The tag name of operator pipeline image. (optional) |
-
 :warning: Conflicts may occur if the project already contains some resources. They may need to be removed first.
+
+Cleanup can be performed by specifying the `absent` state for some of the resources.
+
+```bash
+ansible-playbook -v \
+  -i "ansible/inventory/operator-pipeline-$ENV" \
+  -e "oc_namespace=$NAMESPACE" \
+  -e "ocp_token=`oc whoami -t`" \
+  -e "namespace_state=absent" \
+  -e "github_webhook_state=absent" \
+  --vault-password-file $VAULT_PASSWORD_PATH \
+  ansible/playbooks/deploy.yml
+```
 
 #### Install tkn
 
@@ -64,7 +87,7 @@ cluster for development/testing, purposes.
 
 1. Install [OpenShift Pipelines](https://docs.openshift.com/container-platform/4.7/cicd/pipelines/installing-pipelines.html)
 
-1. Login to your cluster with `oc` CLI. 
+1. Login to your cluster with `oc` CLI.
 
     You can run `crc console --credentials` to get the admin login command.
 
@@ -110,10 +133,11 @@ The pipelines depend on the following certification project fields:
   "name": "<insert-project-name>",
 
   /*
-   Either "connect" or "marketplace".
+   Either "connect", "marketplace" or "undistributed".
    This maps to the `organization` field in the bundle submission repo's config.yaml.
      connect -> certified-operators
      marketplace -> redhat-marketplace
+     undistributed -> certified-operators (certified against, but not distributed to)
   */
   "operator_distribution": "<insert-distribution>",
 
@@ -122,6 +146,8 @@ The pipelines depend on the following certification project fields:
 
   "container": {
     "type": "operator bundle image",
+
+    "build_catagories":"Operator bundle",
 
     // Required but always "rhcc"
     "distribution_method": "rhcc",
@@ -271,8 +297,8 @@ tox
 1. Push the image to a remote registry, eg. Quay.io.
 
     ```bash
-    buildah push <image-digest-from-build-step> <remote-repository> 
-    ```   
+    buildah push <image-digest-from-build-step> <remote-repository>
+    ```
 
     This step may require login, eg.
 

@@ -25,12 +25,22 @@ spec:
       default: community-operator-signing-pipeline.key
     - name: umb_client_name
       default: community-operator-signing-pipeline
+    - name: metrics_endpoint
+      description: Prometheus metrics endpoint
+      default: http://pipeline-metrics.pipeline-metrics-prod
+    - name: signing_pub_secret_name
+      description: The name of the Kubernetes Secret that contains the public key for verifying signatures.
+      default: signing-pub-key
+    - name: signing_pub_secret_key
+      description: The key within the Kubernetes Secret that contains the public key for verifying signatures.
+      default: sig-key.pub
   workspaces:
     - name: pipeline
   tasks:
     - name: verify-whitelisted-index-image
       taskref:
         name: verify-whitelisted-index-image
+        bundle: "quay.io/redhat-isv/tkn-signing-bundle:4692680007"
         kind: Task
       params:
         - name: reference
@@ -51,6 +61,7 @@ spec:
     - name: request-signature
       taskRef:
         name: request-signature
+        bundle: "quay.io/redhat-isv/tkn-signing-bundle:4692680007"
         kind: Task
       runAfter:
         - set-env
@@ -85,6 +96,7 @@ spec:
     - name: upload-signature
       taskRef:
         name: upload-signature
+        bundle: "quay.io/redhat-isv/tkn-signing-bundle:4692680007"
         kind: Task
       runAfter:
         - request-signature
@@ -101,10 +113,25 @@ spec:
           value: "$(params.ssl_key_secret_key)"
         - name: pyxis_url
           value: "$(tasks.set-env.results.pyxis_url)"
-        # TODO: remove it after ISV-1798 is done
-        - name: verify_signature
-          value: "false"
+        - name: signing_pub_secret_name
+          value: "$(params.signing_pub_secret_name)"
+        - name: signing_pub_secret_key
+          value: "$(params.signing_pub_secret_key)"
       workspaces:
         - name: source
           workspace: pipeline
           subPath: signing
+  finally:
+    # Submit a pipeline metrics to a collector
+    - name: update-metrics
+      taskRef:
+        name: update-metrics
+      params:
+        - name: pipelinerun
+          value: "$(context.pipelineRun.name)"
+        - name: metrics_url
+          value: "$(params.metrics_endpoint)"
+      workspaces:
+        - name: output
+          workspace: pipeline
+          subPath: metrics

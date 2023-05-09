@@ -53,6 +53,37 @@ tkn pipeline start operator-ci-pipeline \
   --showlog
 ```
 
+If using an kind cluster with registry, the CI pipeline can be triggered using the tkn CLI like so:
+> Warning: This mode is currently in development and it might not work yet.
+
+> Note: kind cluster with registry setup is documented [here](docs/kind-cluster.md#kind-cluster-setup)
+```bash
+tkn pipeline start operator-ci-pipeline \
+  --use-param-defaults \
+  --param git_repo_url=https://github.com/redhat-openshift-ecosystem/operator-pipelines-test.git \
+  --param git_branch=main \
+  --param bundle_path=operators/kogito-operator/1.6.0-ok \
+  --param env=prod \
+  --param gitInitImage=quay.io/operator_testing/pipelines-git-init-rhel8:latest \
+  --param builder_image=quay.io/operator_testing/buildah:latest \
+  --param registry=$(hostname):5000 \
+  --workspace name=pipeline,volumeClaimTemplateFile=templates/workspace-template.yml \
+  --workspace name=registry-cacert,config=registry-ca-cert
+  --showlog
+```
+
+A subset of tasks in the pipeline requires privilege escalation which is no longer
+supported with OpenShift Pipelines 1.9. Thus a new `SCC` needs to be created and linked
+with `pipeline` service account. Creating [SCC](https://docs.openshift.com/container-platform/4.11/authentication/managing-security-context-constraints.html#security-context-constraints-creating_configuring-internal-oauth)
+requires user with cluster-admin privileges.
+```bash
+# Create a new SCC
+oc apply -f ansible/roles/operator-pipeline/templates/openshift/openshift-pipelines-custom-scc.yml
+# Add SCC to a pipeline service account
+oc adm policy add-scc-to-user pipelines-custom-scc -z pipeline
+```
+
+
 To enable opening the PR and uploading the pipeline logs (visible to the certification project
 owner in Red Hat Connect), pass the following argument:
 
@@ -114,7 +145,7 @@ tkn pipeline start operator-hosted-pipeline \
   --workspace name=repository,volumeClaimTemplateFile=templates/workspace-template-small.yml \
   --workspace name=results,volumeClaimTemplateFile=templates/workspace-template.yml \
   --workspace name=registry-credentials-all,volumeClaimTemplateFile=templates/workspace-template-small.yml \
-  --workspace name=registry-credentials,secret=registry-dockerconfig-secret \
+  --workspace name=registry-credentials,secret=hosted-pipeline-registry-auth-secret \
   --showlog
 ```
 
@@ -145,10 +176,13 @@ tkn pipeline start operator-release-pipeline \
   --param git_pr_title="operator kogito-operator (1.6.1-ok)" \
   --param git_pr_url=https://github.com/redhat-openshift-ecosystem/operator-pipelines-test/pull/31 \
   --param is_latest=true \
+  --param dest_image_namespace=redhat-isv-operators \
   --workspace name=repository,volumeClaimTemplateFile=templates/workspace-template.yml \
   --workspace name=results,volumeClaimTemplateFile=templates/workspace-template-small.yml \
   --workspace name=image-data,volumeClaimTemplateFile=templates/workspace-template-small.yml \
-  --workspace name=registry-credentials,secret=registry-dockerconfig-secret \
+  --workspace name=registry-pull-credentials,secret=release-pipeline-registry-auth-pull-secret \
+  --workspace name=registry-push-credentials,secret=release-pipeline-registry-auth-push-secret \
+  --workspace name=registry-serve-credentials,secret=release-pipeline-registry-auth-serve-secret \
   --showlog
 ```
 
@@ -160,3 +194,8 @@ This image can be overridden by passing the following to any `tkn pipeline start
 ```bash
 --param pipeline_image=<image-pull-spec>
 ```
+
+## Additional Documentation
+
+- [OpenShift cluster configuration](docs/cluster-config.md)
+- [Index signature verification](docs/index-signature-verification.md)

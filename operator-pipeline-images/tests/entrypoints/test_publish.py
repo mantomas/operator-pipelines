@@ -89,7 +89,7 @@ def test_create_repository(mock_get_vendor: MagicMock, mock_post: MagicMock) -> 
         "container": {
             "distribution_method": "rhcc",
             "repository_name": "repo_name",
-            "repository_description": "descrip",
+            "repository_description": "very long description " * 10,
             "release_category": "rel_cat",
             "privileged": True,
             "application_categories": "app_cat",
@@ -100,7 +100,7 @@ def test_create_repository(mock_get_vendor: MagicMock, mock_post: MagicMock) -> 
     mock_get_vendor.return_value = {"label": "my_label"}
 
     args = MagicMock()
-    args.environment = "dev"
+    args.connect_registry = "registry.connect.dev.redhat.com"
     args.pyxis_url = "https://pyxis.com/"
 
     publish.create_repository(args, project)
@@ -109,8 +109,9 @@ def test_create_repository(mock_get_vendor: MagicMock, mock_post: MagicMock) -> 
         "release_categories": ["rel_cat"],
         "display_data": {
             "name": "project_name",
-            "long_description": "descrip",
-            "short_description": "descrip...",
+            "long_description": "very long description " * 10,
+            "short_description": "very long description very long description "
+            "very long description very long description very...",
         },
         "non_production_only": False,
         "privileged_images_allowed": True,
@@ -118,7 +119,7 @@ def test_create_repository(mock_get_vendor: MagicMock, mock_post: MagicMock) -> 
         "protected_for_search": False,
         "registry": "registry.connect.dev.redhat.com",
         "repository": "my_label/repo_name",
-        "build_categories": ["Operator Bundle Image"],
+        "build_categories": ["Operator bundle"],
         "isv_pid": "pid",
         "application_categories": "app_cat",
         "includes_multiple_content_streams": False,

@@ -14,9 +14,9 @@ spec:
     - name: max_supported_index
       description: Pull spec for the index corresponding to the max OCP version
     - name: indices
-      description: All known supported OCP indices paths
+      description: All known supported index image pull specs (space separated)
     - name: indices_ocp_versions
-      description: All known supported OCP indices' OCP versions
+      description: All known supported OCP versions (space separated)
     - name: max_version_indices
       description: Latest known supported OCP indices
     - name: ocp_version
@@ -32,7 +32,13 @@ spec:
         set -xe
 
         ORGANIZATION=$(cat config.yaml | yq -r '.organization')
-        VERSION_INFO=$(ocp-version-info $(params.bundle_path) $ORGANIZATION)
+        OCP_VERSIONS_OUTPUT_FILE="./ocp_versions.json"
+        ocp-version-info \
+          --output-file $OCP_VERSIONS_OUTPUT_FILE \
+          $(params.bundle_path) \
+          $ORGANIZATION
+
+        VERSION_INFO=$(cat $OCP_VERSIONS_OUTPUT_FILE)
         echo $VERSION_INFO | jq
 
         echo $VERSION_INFO \
@@ -46,12 +52,12 @@ spec:
           | tee $(results.max_supported_index.path)
 
         echo $VERSION_INFO \
-          | jq -r '[.indices[].path]' \
+          | jq -r '.indices | map(.path) | join(" ")' \
           | tr -d '\n\r' \
           | tee $(results.indices.path)
 
         echo $VERSION_INFO \
-          | jq -r '[.indices[].ocp_version]' \
+          | jq -r '.indices | map(.ocp_version) | join(" ")' \
           | tr -d '\n\r' \
           | tee $(results.indices_ocp_versions.path)
 

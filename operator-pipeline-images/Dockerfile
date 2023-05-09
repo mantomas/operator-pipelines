@@ -1,9 +1,12 @@
-FROM registry.fedoraproject.org/fedora:34
+FROM registry.fedoraproject.org/fedora:36
 
 LABEL description="Cli tools for operator certification pipeline"
 LABEL summary="This image contains tools required for operator bundle certification pipeline."
 
 ARG USER_UID=1000
+ARG PODMAN_USER_UID=1001
+ARG ARCH=amd64
+
 
 USER root
 
@@ -24,29 +27,35 @@ RUN dnf update -y && \
     gcc \
     gnupg2 \
     jq \
+    cargo \
+    libffi-devel \
+    redhat-rpm-config \
     krb5-devel \
     krb5-workstation \
     yamllint \
     openssl-devel \
-    origin-clients \
     pinentry \
     pip \
-    python3-devel && \
+    podman \
+    python3-devel \
+    skopeo && \
     dnf clean all
 
 COPY operator-pipeline-images/config/krb5.conf /etc/krb5.conf
 
-# Install opm CLI
-RUN curl -LO https://github.com/operator-framework/operator-registry/releases/download/v1.19.5/linux-amd64-opm && \
-    chmod +x linux-amd64-opm && \
-    mv linux-amd64-opm /usr/local/bin/opm
-
-# Download ISV Container Signing Pub Key for signature verification
-RUN curl https://www.redhat.com/security/data/55A34A82.txt -o /etc/containerisvsign.txt  && \
-    chmod go=r /etc/containerisvsign.txt
-ENV ISVSIGN_PUB_KEY=/etc/containerisvsign.txt
+# Install oc and opm CLI
+RUN curl -LO https://github.com/operator-framework/operator-registry/releases/download/v1.26.2/linux-${ARCH}-opm && \
+    chmod +x linux-${ARCH}-opm && \
+    mv linux-${ARCH}-opm /usr/local/bin/opm && \
+    curl -LO https://mirror.openshift.com/pub/openshift-v4/${ARCH}/clients/ocp/latest-4.10/openshift-client-linux.tar.gz && \
+    tar xzvf openshift-client-linux.tar.gz -C /usr/local/bin oc
 
 RUN useradd -ms /bin/bash -u "${USER_UID}" user
+
+RUN useradd -u "${PODMAN_USER_UID}" podman; \
+    echo podman:10000:5000 > /etc/subuid; \
+    echo podman:10000:5000 > /etc/subgid;
+
 
 WORKDIR /home/user
 
