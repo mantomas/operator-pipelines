@@ -9,9 +9,9 @@ on:  # yamllint disable-line rule:truthy
   workflow_dispatch:
 
 jobs:
-  # community-base-pipeline-test:
-  #   name: Community base pipeline test
-  #   runs-on: ubuntu-latest
+  community-base-pipeline-test:
+    name: Community base pipeline test
+    runs-on: ubuntu-latest
   #   steps:
   #     - uses: actions/checkout@v3
   #     - name: Install dependencies
