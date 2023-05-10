@@ -14,6 +14,9 @@ on:  # yamllint disable-line rule:truthy
 jobs:
   run-integration-tests:
     runs-on: ubuntu-latest
+    steps:
+      - name: Do nothing
+        run: echo "This is an empty step"
   #   steps:
   #     - uses: actions/checkout@v2
 

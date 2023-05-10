@@ -12,6 +12,9 @@ jobs:
   community-base-pipeline-test:
     name: Community base pipeline test
     runs-on: ubuntu-latest
+    steps:
+      - name: Do nothing
+        run: echo "This is an empty step"
   #   steps:
   #     - uses: actions/checkout@v3
   #     - name: Install dependencies

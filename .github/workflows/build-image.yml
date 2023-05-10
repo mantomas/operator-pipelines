@@ -15,7 +15,9 @@ jobs:
   build:
     name: Build and push image
     runs-on: ubuntu-latest
-
+    steps:
+      - name: Do nothing
+        run: echo "This is an empty step"
   #   if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
   #   steps:

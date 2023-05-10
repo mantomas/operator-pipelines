@@ -15,6 +15,9 @@ jobs:
   build:
     name: Build and push signing bundle
     runs-on: ubuntu-latest
+    steps:
+      - name: Do nothing
+        run: echo "This is an empty step"
   #   outputs:
   #     bundle_image: ${{ steps.push-bundle.outputs.pullspec }}
 

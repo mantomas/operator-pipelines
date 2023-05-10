@@ -12,6 +12,9 @@ jobs:
   tox:
     name: Run unit tests and linters
     runs-on: ubuntu-latest
+    steps:
+      - name: Do nothing
+        run: echo "This is an empty step"
   #   steps:
   #     - uses: actions/checkout@v2
   #     - uses: fedora-python/tox-github-action@v0.4
